@@ -1,4 +1,4 @@
 {
-    "chrome_ruta": "/usr/bin/google-chrome",
+    "chrome_ruta": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "tema": "Oscuro"
 }

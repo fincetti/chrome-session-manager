@@ -57,4 +57,29 @@ python3 main.py
 - Asegúrate de tener Google Chrome instalado y disponible en el sistema para que la aplicación funcione correctamente.
 - La interfaz gráfica utiliza PyQt5 para proporcionar una experiencia de usuario moderna y fluida.
 
+## 🏗️ Compilación
+
+Para generar un archivo ejecutable de la aplicación, puedes usar `pyinstaller`. Sigue estos pasos:
+
+1. **Instalar PyInstaller:**
+
+   ```bash
+   python3 -m pip install pyinstaller
+   ```
+
+2. **Ejecutar el comando de compilación**  
+   Utiliza el siguiente comando para compilar el proyecto:
+
+   - En **Windows**:
+     ```bash
+     pyinstaller --onefile --windowed --name "chrome_session_manager" --icon=Storage\Settings\icons\favicon.ico main.py
+     ```
+
+   - En **macOS / Linux**:
+     ```bash
+     pyinstaller --onefile --windowed --name "chrome_session_manager" --icon=Storage/Settings/icons/favicon.ico main.py
+     ```
+
+   El archivo ejecutable se generará en la carpeta `dist` dentro del directorio del proyecto.
+
 Goodbye world!

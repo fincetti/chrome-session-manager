@@ -1,8 +1,10 @@
 import os
 import re
 import json
+import shutil
 import socket
 import subprocess
+from pathlib import Path
 from datetime import datetime
 
 from PyQt5.QtCore import Qt
@@ -16,12 +18,21 @@ from PyQt5.QtWidgets import (
 
 
 
+'''
+>>> Metadata de versión de programa
+'''
+VERSION = '1.8'
+
+
+
+
+
 class ChromeSessionManager(QWidget):
     def __init__(self):
         super().__init__()
 
         # Configuración de la ventana principal
-        self.setWindowTitle("Session Manager - Google Chrome")
+        self.setWindowTitle(f"Session Manager (v{VERSION}) - Google Chrome")
         self.setGeometry(100, 100, 1080, 720)
         icon_r = os.path.join('Storage', 'Settings', 'icons', 'favicon.png')
         self.setWindowIcon(QIcon(icon_r))
@@ -298,7 +309,7 @@ class ChromeSessionManager(QWidget):
         for item_data in items:
             new_item = QTreeWidgetItem([item_data['name'], item_data['date'], item_data['size']])
             self.sessions_tree.addTopLevelItem(new_item)
-
+            
     def sort_sessions_by_size(self, order):
         """
         Ordena las sesiones por el uso de almacenamiento.
@@ -343,21 +354,84 @@ class ChromeSessionManager(QWidget):
         return size_value * unit_multipliers[size_unit.upper()]
 
     def cargar_configuracion(self):
+        """
+        Carga la configuración con rutas predeterminadas según la plataforma
+        """
         config_path = os.path.join('Storage', 'Settings', 'constants.json')
         if not os.path.exists(config_path):
             os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            default_config = {"chrome_ruta": "/usr/bin/google-chrome"}
+            
+            # Determinar la ruta predeterminada según el sistema operativo
+            chrome_path = None
+            
+            if os.name == 'nt':  # Windows
+                possible_paths = [
+                    os.path.join(os.environ.get('LOCALAPPDATA', ''), 
+                                'Google', 'Chrome', 'Application', 'chrome.exe'),
+                    os.path.join(os.environ.get('PROGRAMFILES', ''), 
+                                'Google', 'Chrome', 'Application', 'chrome.exe'),
+                    os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 
+                                'Google', 'Chrome', 'Application', 'chrome.exe')
+                ]
+                for path in possible_paths:
+                    if os.path.isfile(path):
+                        chrome_path = path
+                        break
+                        
+            elif sys.platform == 'darwin':  # macOS
+                possible_paths = [
+                    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                    os.path.expanduser('~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+                ]
+                for path in possible_paths:
+                    if os.path.isfile(path):
+                        chrome_path = path
+                        break
+                        
+            else:  # Linux
+                possible_paths = [
+                    '/usr/bin/google-chrome',
+                    '/usr/bin/google-chrome-stable',
+                    '/usr/bin/chrome',
+                    '/snap/bin/google-chrome'
+                ]
+                for path in possible_paths:
+                    if os.path.isfile(path):
+                        chrome_path = path
+                        break
+            
+            # Si no se encontró Chrome, usar una ruta predeterminada según el SO
+            if not chrome_path:
+                if os.name == 'nt':
+                    chrome_path = os.path.join(os.environ.get('PROGRAMFILES', ''),
+                                            'Google', 'Chrome', 'Application', 'chrome.exe')
+                elif sys.platform == 'darwin':
+                    chrome_path = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+                else:
+                    chrome_path = '/usr/bin/google-chrome'
+            
+            default_config = {
+                "chrome_ruta": chrome_path,
+                "tema": "Oscuro"  # tema predeterminado
+            }
+            
             with open(config_path, 'w') as f:
                 json.dump(default_config, f, indent=4)
+                
+            return default_config
         else:
             with open(config_path, 'r') as f:
                 try:
-                    default_config = json.load(f)
+                    return json.load(f)
                 except json.JSONDecodeError:
-                    default_config = {"chrome_ruta": "/usr/bin/google-chrome"}
+                    # Si hay error al cargar el JSON, crear configuración predeterminada
+                    default_config = {
+                        "chrome_ruta": self.detectar_ruta_chrome(),
+                        "tema": "Oscuro"
+                    }
                     with open(config_path, 'w') as f:
                         json.dump(default_config, f, indent=4)
-        return default_config
+                    return default_config
 
     def guardar_configuracion(self):
         """
@@ -367,6 +441,45 @@ class ChromeSessionManager(QWidget):
         self.config['tema'] = self.tema  # Guardar el tema seleccionado
         with open(config_path, 'w') as f:
             json.dump(self.config, f, indent=4)
+    
+    def detectar_ruta_chrome(self):
+        """
+        Detecta la ruta de Chrome según el sistema operativo
+        """
+        if os.name == 'nt':  # Windows
+            possible_paths = [
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe')
+            ]
+        elif sys.platform == 'darwin':  # macOS
+            possible_paths = [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                os.path.expanduser('~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+            ]
+        else:  # Linux
+            possible_paths = [
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chrome',
+                '/snap/bin/google-chrome'
+            ]
+
+        for path in possible_paths:
+            if os.path.isfile(path):
+                return path
+                
+        # Retornar ruta predeterminada si no se encuentra
+        if os.name == 'nt':
+            return os.path.join(os.environ.get('PROGRAMFILES', ''),
+                            'Google', 'Chrome', 'Application', 'chrome.exe')
+        elif sys.platform == 'darwin':
+            return '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        else:
+            return '/usr/bin/google-chrome'
 
     def cargar_sesiones_existentes(self):
         storage_path = os.path.join('Storage', 'Settings', 'sessions.json')
@@ -382,9 +495,21 @@ class ChromeSessionManager(QWidget):
                 return {}
 
     def guardar_sesiones(self):
+        """
+        Guarda las sesiones de manera segura y multiplataforma
+        """
         storage_path = os.path.join('Storage', 'Settings', 'sessions.json')
-        with open(storage_path, 'w') as f:
-            json.dump(self.sesiones, f, indent=4)
+        try:
+            # Asegurar que el directorio existe
+            os.makedirs(os.path.dirname(storage_path), exist_ok=True)
+            
+            # Guardar con manejo de errores
+            with open(storage_path, 'w', encoding='utf-8') as f:
+                json.dump(self.sesiones, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", 
+                            f"Error al guardar las sesiones: {str(e)}", 
+                            QMessageBox.Ok)
 
     def mostrar_sesiones(self):
         """
@@ -412,22 +537,26 @@ class ChromeSessionManager(QWidget):
         self.view_sessions_folder_btn.setVisible(len(self.sesiones) > 0)
 
     def calcular_tamano_sesion(self, nombre_sesion):
-        storage_r = os.path.join('Storage', 'Sessions', nombre_sesion)
-        if os.path.exists(storage_r):
-            return self.calcular_espacio_ocupado_directorio(storage_r)
-        return 0
+        """
+        Calcula el tamaño de una sesión de manera multiplataforma
+        """
+        storage_r = Path('Storage') / 'Sessions' / nombre_sesion
+        try:
+            if storage_r.exists():
+                return sum(f.stat().st_size for f in storage_r.rglob('*') if f.is_file())
+            return 0
+        except Exception:
+            return 0
 
     def calcular_espacio_ocupado_directorio(self, directory):
-        total_size = 0
-        for dirpath, dirnames, filenames in os.walk(directory):
-            for filename in filenames:
-                file_path = os.path.join(dirpath, filename)
-                try:
-                    total_size += os.path.getsize(file_path)
-                except FileNotFoundError:
-                    # Si el archivo no se encuentra, simplemente lo ignoramos
-                    continue
-        return total_size
+        """
+        Calcula el espacio ocupado por un directorio de manera multiplataforma
+        """
+        try:
+            directory_path = Path(directory)
+            return sum(f.stat().st_size for f in directory_path.rglob('*') if f.is_file())
+        except Exception:
+            return 0
 
     def calcular_espacio_ocupado(self):
         storage_dir = os.path.join('Storage', 'Sessions')
@@ -436,9 +565,23 @@ class ChromeSessionManager(QWidget):
         return self.calcular_espacio_ocupado_directorio(storage_dir)
 
     def obtener_espacio_libre(self):
-        disk_info = os.statvfs('/')
-        free_space = disk_info.f_frsize * disk_info.f_bavail
-        return free_space
+        """
+        Obtiene el espacio libre en el disco de manera multiplataforma
+        """
+        if os.name == 'nt':  # Windows
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            ctypes.windll.kernel32.GetDiskFreeSpaceExW(ctypes.c_wchar_p(os.path.abspath('.')), 
+                                                    None, None, 
+                                                    ctypes.pointer(free_bytes))
+            return free_bytes.value
+        elif os.name == 'posix':  # Linux/Mac
+            if hasattr(os, 'statvfs'):  # Linux
+                disk_info = os.statvfs('/')
+                return disk_info.f_frsize * disk_info.f_bavail
+            else:  # Mac
+                st = os.statvfs(os.path.abspath('.'))
+                return st.f_bavail * st.f_frsize
 
     def format_size(self, size):
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -497,30 +640,69 @@ class ChromeSessionManager(QWidget):
         self.crear_instancia_chrome(nombre_sesion, chrome_ruta)
 
     def borrar_sesion(self):
+        """
+        Borra una sesión de manera multiplataforma
+        """
         selected_item = self.sessions_tree.currentItem()
         if not selected_item:
-            QMessageBox.warning(self, "Seleccionar Sesión", "Debe seleccionar una sesión antes de borrar.", QMessageBox.Ok)
+            QMessageBox.warning(self, "Seleccionar Sesión", 
+                            "Debe seleccionar una sesión antes de borrar.", 
+                            QMessageBox.Ok)
             return
 
         nombre_sesion = selected_item.text(0)
         confirm = QMessageBox.question(self, "Confirmar Borrado", 
-                                        f"¿Está seguro de que desea borrar la sesión '{nombre_sesion}' permanentemente?",
-                                        QMessageBox.Yes | QMessageBox.No)
+                                    f"¿Está seguro de que desea borrar la sesión '{nombre_sesion}' permanentemente?",
+                                    QMessageBox.Yes | QMessageBox.No)
+        
         if confirm == QMessageBox.Yes:
             storage_r = os.path.join('Storage', 'Sessions', nombre_sesion)
-            if os.path.exists(storage_r):
-                # Eliminar el directorio de la sesión
-                subprocess.call(['rm', '-rf', storage_r])
+            try:
+                # Usar shutil.rmtree en lugar de subprocess.call(['rm', '-rf', ...])
+                if os.path.exists(storage_r):
+                    shutil.rmtree(storage_r, ignore_errors=True)
 
-            # Eliminar el registro de la sesión
-            if nombre_sesion in self.sesiones:
-                del self.sesiones[nombre_sesion]
-                self.guardar_sesiones()
+                # Eliminar el registro de la sesión
+                if nombre_sesion in self.sesiones:
+                    del self.sesiones[nombre_sesion]
+                    self.guardar_sesiones()
 
-            self.mostrar_sesiones()
-            self.view_sessions_folder_btn.setVisible(len(self.sesiones) > 0)
+                self.mostrar_sesiones()
+                self.view_sessions_folder_btn.setVisible(len(self.sesiones) > 0)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", 
+                                f"No se pudo eliminar la sesión: {str(e)}", 
+                                QMessageBox.Ok)
 
     def crear_instancia_chrome(self, nombre_instancia: str, chrome_ruta: str):
+        """
+        Crea una nueva instancia de Chrome de manera multiplataforma
+        """
+        def find_chrome_path():
+            if os.name == 'nt':  # Windows
+                paths = [
+                    os.path.join(os.environ.get('LOCALAPPDATA', ''), 
+                                'Google', 'Chrome', 'Application', 'chrome.exe'),
+                    os.path.join(os.environ.get('PROGRAMFILES', ''),
+                                'Google', 'Chrome', 'Application', 'chrome.exe'),
+                    os.path.join(os.environ.get('PROGRAMFILES(X86)', ''),
+                                'Google', 'Chrome', 'Application', 'chrome.exe')
+                ]
+                for path in paths:
+                    if os.path.isfile(path):
+                        return path
+            elif sys.platform == 'darwin':  # macOS
+                paths = [
+                    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                    os.path.expanduser('~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+                ]
+                for path in paths:
+                    if os.path.isfile(path):
+                        return path
+            else:  # Linux
+                return '/usr/bin/google-chrome'
+            return None
+
         def find_available_port():
             for port in range(49152, 65536):
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -529,21 +711,48 @@ class ChromeSessionManager(QWidget):
                         return port
             return None
 
-        port = find_available_port()
+        # Si no se proporciona una ruta válida, intentar encontrar Chrome automáticamente
+        if not os.path.isfile(chrome_ruta):
+            chrome_ruta = find_chrome_path()
+            if not chrome_ruta:
+                QMessageBox.critical(self, "Error", 
+                                "No se pudo encontrar Google Chrome instalado en el sistema.", 
+                                QMessageBox.Ok)
+                return
 
+        port = find_available_port()
         if port is None:
-            QMessageBox.critical(self, "Error", "No se pudo encontrar un puerto disponible.", QMessageBox.Ok)
+            QMessageBox.critical(self, "Error", 
+                            "No se pudo encontrar un puerto disponible.", 
+                            QMessageBox.Ok)
             return
 
-        url = "https://www.google.com/"
         storage_r = os.path.join('Storage', 'Sessions', nombre_instancia)
         if not os.path.exists(storage_r):
             os.makedirs(storage_r)
 
-        subprocess.Popen(
-            [chrome_ruta, f"--remote-debugging-port={port}", f"--user-data-dir={storage_r}", url],
-            start_new_session=True
-        )
+        url = "https://www.google.com/"
+        
+        try:
+            if os.name == 'nt':  # Windows
+                subprocess.Popen([
+                    chrome_ruta,
+                    f"--remote-debugging-port={port}",
+                    f"--user-data-dir={os.path.abspath(storage_r)}",
+                    url
+                ], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            else:  # Linux/Mac
+                subprocess.Popen([
+                    chrome_ruta,
+                    f"--remote-debugging-port={port}",
+                    f"--user-data-dir={storage_r}",
+                    url
+                ], start_new_session=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", 
+                            f"Error al iniciar Chrome: {str(e)}", 
+                            QMessageBox.Ok)
+            return
 
     def abrir_configuracion(self):
         config_dialog = ConfiguracionDialog(self.config, self)
@@ -552,14 +761,21 @@ class ChromeSessionManager(QWidget):
         self.guardar_configuracion()
 
     def abrir_carpeta_sesiones(self):
+        """
+        Abre la carpeta de sesiones de manera multiplataforma
+        """
         folder_path = os.path.abspath(os.path.join('Storage', 'Sessions'))
         if os.path.exists(folder_path):
-            if os.name == 'nt':  # Para Windows
+            if os.name == 'nt':  # Windows
                 os.startfile(folder_path)
-            elif os.name == 'posix':  # Para macOS y Linux
-                subprocess.call(('xdg-open', folder_path))
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.call(['open', folder_path])
+            else:  # Linux
+                subprocess.call(['xdg-open', folder_path])
         else:
-            QMessageBox.warning(self, "Error", "La carpeta de sesiones no existe.", QMessageBox.Ok)
+            QMessageBox.warning(self, "Error", 
+                            "La carpeta de sesiones no existe.", 
+                            QMessageBox.Ok)
 
     def actualizar_todo(self):
         # Recargar las sesiones existentes
@@ -575,78 +791,164 @@ class ConfiguracionDialog(QDialog):
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configuración")
-        self.setGeometry(150, 150, 400, 150)
+        self.setGeometry(150, 150, 400, 200)
         self.config = config
-        self.parent = parent  # Referencia al ChromeSessionManager
+        self.parent = parent
 
+        # Configurar la interfaz
+        self.setup_ui()
+        
+        # Cargar la configuración actual
+        self.cargar_configuracion_actual()
+
+    def setup_ui(self):
         layout = QVBoxLayout()
         
         # Sección de selección de tema
+        tema_layout = QHBoxLayout()
         tema_label = QLabel("Tema:", self)
-        layout.addWidget(tema_label)
-
         self.tema_selector = QComboBox(self)
         self.tema_selector.addItems(["Oscuro", "Encendido"])
-        self.tema_selector.setCurrentText(self.config.get("tema", "Oscuro"))
-        layout.addWidget(self.tema_selector)
+        tema_layout.addWidget(tema_label)
+        tema_layout.addWidget(self.tema_selector)
+        layout.addLayout(tema_layout)
 
         # Campo de entrada para la ruta de Chrome
+        chrome_layout = QVBoxLayout()
         chrome_ruta_label = QLabel("Ruta a Google Chrome:", self)
-        layout.addWidget(chrome_ruta_label)
-
         self.chrome_ruta_input = QLineEdit(self)
-        self.chrome_ruta_input.setText(self.config.get('chrome_ruta', '/usr/bin/google-chrome'))
-        self.chrome_ruta_input.setFont(QFont("Arial", 12))
-        self.chrome_ruta_input.setStyleSheet("padding: 10px; border-radius: 5px; border: 1px solid #ccc;")
-        layout.addWidget(self.chrome_ruta_input)
+        self.chrome_ruta_input.setFont(QFont("Arial", 11))
+        
+        # Botón para buscar Chrome
+        browse_layout = QHBoxLayout()
+        select_chrome_btn = QPushButton("Buscar...", self)
+        detect_chrome_btn = QPushButton("Detectar automáticamente", self)
+        
+        select_chrome_btn.clicked.connect(self.seleccionar_ruta_chrome)
+        detect_chrome_btn.clicked.connect(self.detectar_chrome_automaticamente)
+        
+        browse_layout.addWidget(select_chrome_btn)
+        browse_layout.addWidget(detect_chrome_btn)
+        
+        chrome_layout.addWidget(chrome_ruta_label)
+        chrome_layout.addWidget(self.chrome_ruta_input)
+        chrome_layout.addLayout(browse_layout)
+        layout.addLayout(chrome_layout)
 
-        # Botón para seleccionar la ruta del ejecutable de Chrome
-        select_chrome_ruta_btn = QPushButton("Seleccionar desde explorador...", self)
-        select_chrome_ruta_btn.setFont(QFont("Arial", 12))
-        select_chrome_ruta_btn.clicked.connect(self.seleccionar_ruta_chrome)
-        layout.addWidget(select_chrome_ruta_btn)
-
-        # Botón para guardar la configuración
+        # Botón guardar
         save_btn = QPushButton("Guardar", self)
-        save_btn.setFont(QFont("Arial", 12, QFont.Bold))
-        save_btn.setStyleSheet("""
-            QPushButton {
-                padding: 10px;
-                background-color: #28a745;
-                color: white;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
         save_btn.clicked.connect(self.guardar)
         layout.addWidget(save_btn)
+
         self.setLayout(layout)
 
+    def detectar_chrome_automaticamente(self):
+        """
+        Detecta automáticamente la instalación de Chrome según el sistema operativo
+        """
+        chrome_path = None
+        
+        if os.name == 'nt':  # Windows
+            possible_paths = [
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 
+                            'Google', 'Chrome', 'Application', 'chrome.exe')
+            ]
+        elif sys.platform == 'darwin':  # macOS
+            possible_paths = [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                os.path.expanduser('~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+            ]
+        else:  # Linux
+            possible_paths = [
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chrome',
+                '/snap/bin/google-chrome'
+            ]
+
+        for path in possible_paths:
+            if os.path.isfile(path):
+                chrome_path = path
+                break
+
+        if chrome_path:
+            self.chrome_ruta_input.setText(chrome_path)
+            QMessageBox.information(self, "Chrome Detectado", 
+                                  f"Se ha detectado Chrome en:\n{chrome_path}", 
+                                  QMessageBox.Ok)
+        else:
+            QMessageBox.warning(self, "Chrome No Encontrado", 
+                              "No se pudo detectar Chrome automáticamente. Por favor, seleccione la ruta manualmente.", 
+                              QMessageBox.Ok)
+
     def seleccionar_ruta_chrome(self):
+        """
+        Abre un diálogo de selección de archivo multiplataforma
+        """
+        file_filter = "Chrome Executable ("
+        if os.name == 'nt':
+            file_filter += "chrome.exe"
+        elif sys.platform == 'darwin':
+            file_filter += "Google Chrome"
+        else:
+            file_filter += "chrome google-chrome"
+        file_filter += ")"
+
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.ExistingFile)
-        file_dialog.setNameFilter("Google Chrome (chrome*);;Todos los archivos (*)")
+        file_dialog.setNameFilter(file_filter)
+        
         if file_dialog.exec_():
             selected_file = file_dialog.selectedFiles()[0]
             self.chrome_ruta_input.setText(selected_file)
 
+    def cargar_configuracion_actual(self):
+        """
+        Carga la configuración actual en la interfaz
+        """
+        self.tema_selector.setCurrentText(self.config.get("tema", "Oscuro"))
+        self.chrome_ruta_input.setText(self.config.get("chrome_ruta", ""))
+
     def guardar(self):
-        # Guardar el tema seleccionado
-        self.config['tema'] = self.tema_selector.currentText()
-        self.config['chrome_ruta'] = self.chrome_ruta_input.text()
+        """
+        Guarda la configuración de manera segura
+        """
+        try:
+            chrome_ruta = self.chrome_ruta_input.text()
+            
+            # Verificar que la ruta existe y es ejecutable
+            if not os.path.isfile(chrome_ruta):
+                QMessageBox.warning(self, "Error", 
+                                  "La ruta especificada para Chrome no existe.", 
+                                  QMessageBox.Ok)
+                return
 
-        # Aplicar el tema en tiempo real
-        self.parent.tema = self.config['tema']  # Actualizar el tema en el objeto principal
-        self.parent.aplicar_tema()  # Aplicar el tema inmediatamente
+            # Guardar la configuración
+            self.config['tema'] = self.tema_selector.currentText()
+            self.config['chrome_ruta'] = chrome_ruta
 
-        # Guardar la configuración en el archivo JSON
-        self.parent.guardar_configuracion()
+            # Aplicar el tema
+            self.parent.tema = self.config['tema']
+            self.parent.aplicar_tema()
 
-        self.accept()
-
+            # Guardar en el archivo
+            self.parent.guardar_configuracion()
+            
+            self.accept()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", 
+                               f"Error al guardar la configuración: {str(e)}", 
+                               QMessageBox.Ok)
+    
     def get_config(self):
+        """
+        Retorna la configuración actual
+        """
         return self.config
 
 if __name__ == '__main__':
