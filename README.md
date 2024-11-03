@@ -13,7 +13,7 @@
 1. **Clonar el repositorio:**
 
    ```bash
-   git clone https://github.com/fincetti/chrome-session-manager.git
+   git clone https://github.com/rodolfocasan/chrome-session-manager.git
    cd chrome-session-manager
    ```
 
