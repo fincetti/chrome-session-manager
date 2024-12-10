@@ -9,6 +9,7 @@ from datetime import datetime
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QLineEdit, QTreeWidget, QTreeWidgetItem,
     QMessageBox, QHBoxLayout, QLabel, QDialog, QFileDialog, QComboBox
@@ -21,11 +22,33 @@ from PyQt5.QtWidgets import (
 '''
 >>> Metadata de versión de programa
 '''
-VERSION = '1.8'
+VERSION = '1.9'
 
 
 
 
+
+class SessionLoaderThread(QThread):
+    session_data_ready = pyqtSignal(list)  # Señal para enviar los datos al hilo principal
+
+    def __init__(self, session_paths):
+        super().__init__()
+        self.session_paths = session_paths
+
+    def run(self):
+        sessions = []
+        for session_name, session_path in self.session_paths.items():
+            size = self.calculate_directory_size(session_path)
+            sessions.append((session_name, session_path, size))
+        self.session_data_ready.emit(sessions)
+
+    def calculate_directory_size(self, path):
+        total_size = 0
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                fp = os.path.join(root, f)
+                total_size += os.path.getsize(fp)
+        return total_size
 
 class ChromeSessionManager(QWidget):
     def __init__(self):
@@ -39,6 +62,9 @@ class ChromeSessionManager(QWidget):
 
         # Cargar configuraciones y sesiones existentes
         self.config = self.cargar_configuracion()
+
+        # Caché para datos de sesiones
+        self.session_cache = {}
 
         # Variable para el estado del orden actual (ascendente o descendente) para cada columna
         self.sort_orders = {
@@ -84,12 +110,21 @@ class ChromeSessionManager(QWidget):
         self.sessions_tree = QTreeWidget(self)
         self.sessions_tree.setFont(QFont("Arial", 11))
         self.sessions_tree.setHeaderLabels(["Nombre", "Fecha/Hora de Creación", "Uso de Almacenamiento"])
-        
+
+        # Ajustar automáticamente el tamaño de las columnas
+        self.sessions_tree.header().setSectionResizeMode(0, self.sessions_tree.header().ResizeToContents)  # Nombre
+        self.sessions_tree.header().setSectionResizeMode(1, self.sessions_tree.header().ResizeToContents)  # Fecha/Hora
+        self.sessions_tree.header().setSectionResizeMode(2, self.sessions_tree.header().ResizeToContents)  # Uso de almacenamiento
+
         # Habilitar clics en el encabezado para ordenar
         header = self.sessions_tree.header()
         header.setSectionsClickable(True)
         header.sectionClicked.connect(self.on_header_click)
         header.setSortIndicatorShown(True)  # Mostrar el indicador de orden en el encabezado
+
+        # Establecer el orden inicial por "Nombre" (columna 0, orden ascendente)
+        self.sessions_tree.sortItems(0, Qt.AscendingOrder)
+        header.setSortIndicator(0, Qt.AscendingOrder)
 
         # Conectar la señal de cambio de selección al método actualizar_botones
         self.sessions_tree.itemSelectionChanged.connect(self.actualizar_botones)
@@ -226,18 +261,39 @@ class ChromeSessionManager(QWidget):
 
         self.setLayout(main_layout)
 
-        # Cargar sesiones existentes y mostrarlas
+        # Cargar sesiones existentes y mostrarlas asincrónicamente
         self.sesiones = self.cargar_sesiones_existentes()
-        self.mostrar_sesiones()
-        self.actualizar_espacio()
-
-        # Ordenar por defecto por "Nombre"
-        self.sessions_tree.sortItems(0, Qt.AscendingOrder)
-        header.setSortIndicator(0, Qt.AscendingOrder)
+        self.load_sessions_async()
 
         # Aplicar el tema al final
         self.tema = self.config.get("tema", "Oscuro")  # Oscuro por defecto
         self.aplicar_tema()
+    
+    def load_sessions_async(self):
+        """
+        Carga las sesiones de forma asincrónica para evitar bloqueos de la interfaz.
+        """
+        session_paths = {
+            session_name: os.path.join('Storage', 'Sessions', session_name)
+            for session_name in self.sesiones
+        }
+        self.loader_thread = SessionLoaderThread(session_paths)
+        self.loader_thread.session_data_ready.connect(self.on_sessions_loaded)
+        self.loader_thread.start()
+    
+    def on_sessions_loaded(self, sessions):
+        """
+        Maneja los datos de sesiones cargados asincrónicamente.
+        """
+        for session_name, session_path, size in sessions:
+            self.session_cache[session_name] = {
+                'path': session_path,
+                'size': size
+            }
+        self.mostrar_sesiones()
+        
+        # Ordenar por defecto por "Nombre" (columna 0, orden ascendente)
+        self.sessions_tree.sortItems(0, Qt.AscendingOrder)
     
     def aplicar_tema(self):
         """
@@ -513,28 +569,19 @@ class ChromeSessionManager(QWidget):
 
     def mostrar_sesiones(self):
         """
-        Muestra las sesiones cargadas en el QTreeWidget.
+        Muestra las sesiones en el árbol utilizando los datos de la caché.
         """
         self.sessions_tree.clear()
-        for nombre_sesion, fecha_hora in self.sesiones.items():
-            uso_almacenamiento = self.calcular_tamano_sesion(nombre_sesion)
-            porcentaje_uso = (uso_almacenamiento / self.calcular_espacio_ocupado()) * 100 if self.calcular_espacio_ocupado() > 0 else 0
-            item = QTreeWidgetItem([nombre_sesion, fecha_hora, f"{self.format_size(uso_almacenamiento)} ({porcentaje_uso:.1f}% del espacio total ocupado)"])
+        total_size = sum(data['size'] for data in self.session_cache.values())
+
+        for session_name, data in self.session_cache.items():
+            size_formatted = self.format_size(data['size'])
+            porcentaje = (data['size'] / total_size * 100) if total_size > 0 else 0
+            size_display = f"{size_formatted} ({porcentaje:.2f}% del espacio total ocupado)"
+            item = QTreeWidgetItem([session_name, self.sesiones[session_name], size_display])
             self.sessions_tree.addTopLevelItem(item)
 
-        # Actualizar los botones según la selección actual
-        self.actualizar_botones()
-
-        # Ajustar automáticamente el tamaño de las columnas
-        for column in range(self.sessions_tree.columnCount()):
-            self.sessions_tree.resizeColumnToContents(column)
-            current_width = self.sessions_tree.columnWidth(column)
-            self.sessions_tree.setColumnWidth(column, current_width + 20)
-
         self.actualizar_espacio()
-
-        # Mostrar u ocultar el botón "Ver carpeta de sesiones"
-        self.view_sessions_folder_btn.setVisible(len(self.sesiones) > 0)
 
     def calcular_tamano_sesion(self, nombre_sesion):
         """
@@ -591,9 +638,14 @@ class ChromeSessionManager(QWidget):
         return f"{size:.2f} PB"
 
     def actualizar_espacio(self):
-        espacio_ocupado = self.calcular_espacio_ocupado()
+        """
+        Actualiza la información del espacio ocupado y libre.
+        """
+        espacio_ocupado = sum(data['size'] for data in self.session_cache.values())
         espacio_libre = self.obtener_espacio_libre()
-        self.space_info_label.setText(f"Espacio total ocupado: {self.format_size(espacio_ocupado)}  -  Espacio libre: {self.format_size(espacio_libre)}")
+        self.space_info_label.setText(
+            f"Espacio total ocupado: {self.format_size(espacio_ocupado)} - Espacio libre: {self.format_size(espacio_libre)}"
+        )
 
     def actualizar_botones(self):
         """
@@ -646,33 +698,34 @@ class ChromeSessionManager(QWidget):
         selected_item = self.sessions_tree.currentItem()
         if not selected_item:
             QMessageBox.warning(self, "Seleccionar Sesión", 
-                            "Debe seleccionar una sesión antes de borrar.", 
-                            QMessageBox.Ok)
+                                "Debe seleccionar una sesión antes de borrar.", 
+                                QMessageBox.Ok)
             return
 
         nombre_sesion = selected_item.text(0)
         confirm = QMessageBox.question(self, "Confirmar Borrado", 
-                                    f"¿Está seguro de que desea borrar la sesión '{nombre_sesion}' permanentemente?",
-                                    QMessageBox.Yes | QMessageBox.No)
+                                        f"¿Está seguro de que desea borrar la sesión '{nombre_sesion}' permanentemente?",
+                                        QMessageBox.Yes | QMessageBox.No)
         
         if confirm == QMessageBox.Yes:
             storage_r = os.path.join('Storage', 'Sessions', nombre_sesion)
             try:
-                # Usar shutil.rmtree en lugar de subprocess.call(['rm', '-rf', ...])
                 if os.path.exists(storage_r):
                     shutil.rmtree(storage_r, ignore_errors=True)
 
-                # Eliminar el registro de la sesión
+                if os.path.exists(storage_r):  # Verificar si la carpeta aún existe
+                    raise OSError("No se pudo eliminar el directorio.")
+
                 if nombre_sesion in self.sesiones:
                     del self.sesiones[nombre_sesion]
                     self.guardar_sesiones()
+                    del self.session_cache[nombre_sesion]
 
                 self.mostrar_sesiones()
-                self.view_sessions_folder_btn.setVisible(len(self.sesiones) > 0)
             except Exception as e:
                 QMessageBox.critical(self, "Error", 
-                                f"No se pudo eliminar la sesión: {str(e)}", 
-                                QMessageBox.Ok)
+                                    f"No se pudo eliminar la sesión: {str(e)}", 
+                                    QMessageBox.Ok)
 
     def crear_instancia_chrome(self, nombre_instancia: str, chrome_ruta: str):
         """
